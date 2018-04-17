@@ -1,0 +1,6 @@
+[package]
+name = "vrms-rs"
+version = "0.1.0"
+authors = ["Marcin Radomski <marcin@mradomski.pl>"]
+
+[dependencies]
