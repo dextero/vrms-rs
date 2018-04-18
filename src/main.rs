@@ -1,3 +1,8 @@
+#[macro_use]
+extern crate matches;
+extern crate regex;
+
+use std::cmp::min;
 use std::fmt;
 use std::fmt::Display;
 use std::error::Error;
@@ -7,6 +12,8 @@ use std::io::BufRead;
 use std::collections::HashSet;
 use std::process::Command;
 use std::process;
+
+use regex::Regex;
 
 #[derive(Debug)]
 struct VrmsError {
@@ -37,7 +44,7 @@ impl Error for VrmsError {
 
 type Result<T> = std::result::Result<T, Box<Error>>;
 
-fn read_licences_from_file(file: &str) -> Result<HashSet<String>> {
+fn read_licenses_from_file(file: &str) -> Result<HashSet<String>> {
     let file = File::open(file)?;
     let buf_reader = BufReader::new(file);
     let mut lines = HashSet::new();
@@ -51,14 +58,14 @@ fn read_licences_from_file(file: &str) -> Result<HashSet<String>> {
 
 struct Package {
     name: String,
-    licence: String
+    license: License
 }
 
 impl Package {
-    fn new(name: &str, licence: &str) -> Package {
+    fn new(name: &str, license: License) -> Package {
         Package {
             name: name.to_owned(),
-            licence: licence.to_owned()
+            license: license
         }
     }
 }
@@ -92,16 +99,267 @@ impl PackageReader for RpmPackageReader {
             if words.len() != 2 {
                 return Err(VrmsError::new_box(format!("unexpected line format: {}", line)));
             }
-            packages.push(Package::new(words[0], words[1]));
+            packages.push(Package::new(words[0], License::parse(words[1])?));
         }
 
         Ok(packages)
     }
 }
 
+fn parens_balanced(text: &str) -> bool {
+    let mut depth = 0;
+
+    for c in text.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return false;
+                } else {
+                    depth -= 1
+                }
+            }
+            _ => {}
+        }
+    }
+
+    return depth == 0
+}
+
+fn unparenthesize(text: &str) -> &str {
+    let opening_parens = text.chars()
+                             .take_while(|c| { *c == '(' })
+                             .count();
+    let closing_parens = text.chars()
+                             .rev()
+                             .take_while(|c| { *c == ')' })
+                             .count();
+    let chars_to_trim = min(opening_parens, closing_parens);
+    &text[chars_to_trim..text.len() - chars_to_trim]
+}
+
+#[test]
+fn test_unparenthesize() {
+    assert_eq!("", unparenthesize(""));
+    assert_eq!("a", unparenthesize("a"));
+    assert_eq!("a", unparenthesize("(a)"));
+    assert_eq!("a", unparenthesize("(((a)))"));
+    assert_eq!("(a", unparenthesize("(((a))"));
+    assert_eq!("a)", unparenthesize("((a)))"));
+    assert_eq!(" (a)))", unparenthesize(" (a)))"));
+}
+
+#[derive(Debug)]
+enum License {
+    License(String),
+    Or(Vec<License>),
+    And(Vec<License>),
+}
+
+fn find_paren_end(text: &str) -> Result<usize> {
+    assert!(text.chars().next() == Some('('));
+
+    let mut depth = 1;
+    for (idx, c) in text.chars().enumerate().skip(1) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    eprintln!("found matching paren at {} for text: {}", idx, text);
+                    return Ok(idx + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err(VrmsError::new_box(format!("mismatched opening paren in string: {}", text)))
+}
+
+#[derive(Debug)]
+enum Separator { Or, And }
+
+fn detect_separator(text: &str) -> Result<Option<Separator>> {
+    let mut separator = None;
+    let regex = Regex::new(r"(?: or )|(?: and )|[()]")?;
+
+    let mut offset = 0;
+    while let Some(m) = regex.find(&text[offset..]) {
+        match m.as_str() {
+            " or " => {
+                match separator {
+                    Some(Separator::And) =>  {
+                        return Err(VrmsError::new_box(format!("mismatched separators (and/or) in segment: {}", text)));
+                    },
+                    _ => separator = Some(Separator::Or)
+                }
+            },
+            " and " => {
+                match separator {
+                    Some(Separator::Or) => {
+                        return Err(VrmsError::new_box(format!("mismatched separators (and/or) in segment: {}", text)));
+                    },
+                    _ => separator = Some(Separator::And)
+                }
+            },
+            "(" => { 
+                offset += find_paren_end(&text[offset..])? - m.end(); // TODO: hax
+            },
+            ")" => {
+                return Err(VrmsError::new_box(format!("mismatched closing paren at offset {}, text = {}", offset, text)))
+            }
+            _ => panic!("should never happen")
+        }
+
+        offset += m.end();
+    }
+
+    eprintln!("detected separator: {:?} for text: {}", separator, text);
+    Ok(separator)
+}
+
+impl License {
+    fn make_or(def: &str) -> Result<License> {
+        let mut segments = Vec::new();
+        for segment in def.split(" or ") {
+            segments.push(License::parse(segment)?);
+        }
+        Ok(License::Or(segments))
+    }
+
+    fn make_and(def: &str) -> Result<License> {
+        let mut segments = Vec::new();
+        for segment in def.split(" and ") {
+            segments.push(License::parse(segment)?);
+        }
+        Ok(License::And(segments))
+    }
+
+    fn parse(raw_text: &str) -> Result<License> {
+        let text = unparenthesize(raw_text.trim());
+
+        if text.is_empty() {
+            Err(VrmsError::new_box("invalid empty license description segment".to_owned()))
+        } else {
+            match detect_separator(text)? {
+                Some(Separator::Or) => License::make_or(text),
+                Some(Separator::And) => License::make_and(text),
+                None => {
+                    if parens_balanced(text) {
+                        Ok(License::License(text.to_owned()))
+                    } else {
+                        Err(VrmsError::new_box(format!("unbalanced parentheses in segment: {}", text)))
+                    }
+                }
+            }
+        }
+    }
+
+    fn matches(&self, good_licenses: &HashSet<String>) -> bool {
+        match self {
+            License::License(name) => good_licenses.contains(name),
+            License::Or(sub_licenses) => {
+                sub_licenses.iter().any(|l| { l.matches(good_licenses) })
+            },
+            License::And(sub_licenses) => {
+                sub_licenses.iter().all(|l| { l.matches(good_licenses) })
+            }
+        }
+    }
+}
+
+impl PartialEq for License {
+    fn eq(&self, other: &License) -> bool {
+        match (self, other) {
+            (License::License(a), License::License(b)) => a == b,
+            (License::Or(a), License::Or(b)) => a == b,
+            (License::And(a), License::And(b)) => a == b,
+            _ => false
+        }
+    }
+}
+
+#[test]
+fn license_parse_trivial() {
+    assert_eq!(License::License("trivial".to_owned()),
+               License::parse("trivial").unwrap());
+    assert_eq!(License::License("with spaces".to_owned()),
+               License::parse("with spaces").unwrap());
+    assert_eq!(License::License("spaces around".to_owned()),
+               License::parse("  spaces around\t\n").unwrap());
+    assert_eq!(License::License("parens around".to_owned()),
+               License::parse("(parens around)").unwrap());
+}
+
+#[test]
+fn license_parse_or() {
+    assert_eq!(License::Or(
+                   vec!(License::License("a".to_owned()),
+                        License::License("b".to_owned()))),
+               License::parse("a or b").unwrap());
+    assert_eq!(License::Or(
+                   vec!(License::License("a".to_owned()),
+                        License::License("b".to_owned()),
+                        License::License("c".to_owned()))),
+               License::parse("a or b or c").unwrap());
+}
+
+#[test]
+fn license_parse_and() {
+    assert_eq!(License::And(
+                   vec!(License::License("a".to_owned()),
+                        License::License("b".to_owned()))),
+               License::parse("a and b").unwrap());
+    assert_eq!(License::And(
+                   vec!(License::License("a".to_owned()),
+                        License::License("b".to_owned()),
+                        License::License("c".to_owned()))),
+               License::parse("a and b and c").unwrap());
+}
+
+#[test]
+fn license_parse_nested() {
+    assert_eq!(License::Or(
+                   vec!(License::And(vec!(License::License("a".to_owned()),
+                                          License::License("b".to_owned()))),
+                        License::License("c".to_owned()))),
+               License::parse("(a and b) or c").unwrap());
+    assert_eq!(License::Or(
+                   vec!(License::License("a".to_owned()),
+                        License::And(vec!(License::License("b".to_owned()),
+                                          License::License("c".to_owned()))))),
+               License::parse("a or (b and c)").unwrap());
+    assert_eq!(License::And(
+                   vec!(License::Or(vec!(License::License("a".to_owned()),
+                                         License::License("b".to_owned()))),
+                        License::License("c".to_owned()))),
+               License::parse("(a or b) and c").unwrap());
+    assert_eq!(License::And(
+                   vec!(License::License("a".to_owned()),
+                        License::Or(vec!(License::License("b".to_owned()),
+                                         License::License("c".to_owned()))))),
+               License::parse("a and (b or c)").unwrap());
+}
+
+#[test]
+fn license_parse_invalid() {
+    assert_matches!(License::parse(""), Err(_));
+    assert_matches!(License::parse("("), Err(_));
+    assert_matches!(License::parse(")"), Err(_));
+    assert_matches!(License::parse("(a"), Err(_));
+    assert_matches!(License::parse("a)"), Err(_));
+    assert_matches!(License::parse(" (a"), Err(_));
+    assert_matches!(License::parse("a) "), Err(_));
+    assert_matches!(License::parse("((a)"), Err(_));
+    assert_matches!(License::parse("(a))"), Err(_));
+    assert_matches!(License::parse("a and b or c"), Err(_));
+    assert_matches!(License::parse("a or b and c"), Err(_));
+}
+
 fn main() {
-    let licences = match read_licences_from_file("good-licences.txt") {
-        Ok(licences) => licences,
+    let licenses = match read_licenses_from_file("good-licenses.txt") {
+        Ok(licenses) => licenses,
         Err(e) => {
             eprintln!("{}", e);
             process::exit(1)
@@ -117,7 +375,7 @@ fn main() {
     };
 
     for package in packages {
-        if licences.contains(&package.licence) {
+        if package.license.matches(&licenses) {
             println!("{}: zajebioza", package.name);
         } else {
             println!("{}: chujowo", package.name);
