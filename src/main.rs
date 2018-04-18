@@ -1,4 +1,5 @@
 #[macro_use]
+#[cfg(test)]
 extern crate matches;
 extern crate regex;
 
@@ -166,7 +167,6 @@ fn find_paren_end(text: &str) -> Result<usize> {
             ')' => {
                 depth -= 1;
                 if depth == 0 {
-                    eprintln!("found matching paren at {} for text: {}", idx, text);
                     return Ok(idx + 1);
                 }
             }
@@ -215,7 +215,6 @@ fn detect_separator(text: &str) -> Result<Option<Separator>> {
         offset += m.end();
     }
 
-    eprintln!("detected separator: {:?} for text: {}", separator, text);
     Ok(separator)
 }
 
@@ -358,7 +357,7 @@ fn license_parse_invalid() {
 }
 
 fn main() {
-    let licenses = match read_licenses_from_file("good-licenses.txt") {
+    let licenses = match read_licenses_from_file("good-licences.txt") {
         Ok(licenses) => licenses,
         Err(e) => {
             eprintln!("{}", e);
