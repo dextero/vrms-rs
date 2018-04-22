@@ -17,29 +17,42 @@ use std::process;
 use regex::Regex;
 
 #[derive(Debug)]
-struct VrmsError {
+struct VrmsError<ErrT: Error> {
     msg: String,
+    error: Option<ErrT>
 }
 
-impl VrmsError {
-    fn new(msg: String) -> VrmsError {
-        VrmsError { msg: msg }
+impl<ErrT: Error> VrmsError<ErrT> {
+    fn new_box(msg: String) -> Box<Self> {
+        Box::new(Self { msg : msg, error: None })
     }
 
-    fn new_box(msg: String) -> Box<VrmsError> {
-        Box::new(Self::new(msg))
+    fn wrap(e: &ErrT, msg: String) -> Box<Self> {
+        Box::new(Self { msg: msg, error: Some(*e) })
     }
 }
 
-impl Display for VrmsError {
+impl<ErrT: Error> Display for VrmsError<ErrT> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(self.description())
+        formatter.write_str(self.description())?;
+        match self.error {
+            Some(e) => formatter.write_str(&format!("\ncaused by: {:?}", e))?,
+            None => {}
+        }
+        Ok(())
     }
 }
 
-impl Error for VrmsError {
+impl<ErrT: Error> Error for VrmsError<ErrT> {
     fn description(&self) -> &str {
         &self.msg
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match self.error {
+            Some(ref e) => Some(e),
+            None => None
+        }
     }
 }
 
@@ -100,7 +113,11 @@ impl PackageReader for RpmPackageReader {
             if words.len() != 2 {
                 return Err(VrmsError::new_box(format!("unexpected line format: {}", line)));
             }
-            packages.push(Package::new(words[0], License::parse(words[1])?));
+            let license = match License::parse(words[1]) {
+                Ok(lic) => lic,
+                Err(e) => return Err(VrmsError::wrap(&e, format!("could not parse license: {}", line)))
+            };
+            packages.push(Package::new(words[0], license));
         }
 
         Ok(packages)
