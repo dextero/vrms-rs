@@ -318,6 +318,12 @@ fn license_parse_nested() {
                         License::Or(vec!(License::License("b".to_owned()),
                                          License::License("c".to_owned()))))),
                License::parse("a and (b or c)").unwrap());
+    assert_eq!(License::And(
+                   vec!(License::Or(vec!(License::License("a".to_owned()),
+                                         License::License("b".to_owned()))),
+                        License::Or(vec!(License::License("c".to_owned()),
+                                         License::License("f".to_owned()))))),
+               License::parse("(a or b) and (c or d)").unwrap());
 }
 
 #[test]
