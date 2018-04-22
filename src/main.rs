@@ -2,11 +2,10 @@
 #[cfg(test)]
 extern crate matches;
 extern crate regex;
+#[macro_use]
+extern crate error_chain;
 
 use std::cmp::min;
-use std::fmt;
-use std::fmt::Display;
-use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufRead;
@@ -16,47 +15,13 @@ use std::process;
 
 use regex::Regex;
 
-#[derive(Debug)]
-struct VrmsError<ErrT: Error> {
-    msg: String,
-    error: Option<ErrT>
-}
-
-impl<ErrT: Error> VrmsError<ErrT> {
-    fn new_box(msg: String) -> Box<Self> {
-        Box::new(Self { msg : msg, error: None })
-    }
-
-    fn wrap(e: &ErrT, msg: String) -> Box<Self> {
-        Box::new(Self { msg: msg, error: Some(*e) })
+error_chain! {
+    foreign_links {
+        Io(::std::io::Error);
+        String(::std::string::FromUtf8Error);
+        Regex(::regex::Error);
     }
 }
-
-impl<ErrT: Error> Display for VrmsError<ErrT> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(self.description())?;
-        match self.error {
-            Some(e) => formatter.write_str(&format!("\ncaused by: {:?}", e))?,
-            None => {}
-        }
-        Ok(())
-    }
-}
-
-impl<ErrT: Error> Error for VrmsError<ErrT> {
-    fn description(&self) -> &str {
-        &self.msg
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        match self.error {
-            Some(ref e) => Some(e),
-            None => None
-        }
-    }
-}
-
-type Result<T> = std::result::Result<T, Box<Error>>;
 
 fn read_licenses_from_file(file: &str) -> Result<HashSet<String>> {
     let file = File::open(file)?;
@@ -103,20 +68,17 @@ impl RpmPackageReader {
 impl PackageReader for RpmPackageReader {
     fn read_packages(&self) -> Result<Vec<Package>> {
         let child = Command::new("/tmp/rpm")
-            .output()
-            .expect("failed to execute process");
+            .output()?;
         let mut packages = Vec::new();
         let packages_str = String::from_utf8(child.stdout)?;
 
         for line in packages_str.lines() {
             let words: Vec<&str> = line.split('\t').collect();
             if words.len() != 2 {
-                return Err(VrmsError::new_box(format!("unexpected line format: {}", line)));
+                return Err(Error::from(format!("unexpected line format: {}", line)));
             }
-            let license = match License::parse(words[1]) {
-                Ok(lic) => lic,
-                Err(e) => return Err(VrmsError::wrap(&e, format!("could not parse license: {}", line)))
-            };
+            let license = License::parse(words[1])
+                .chain_err(|| format!("could not parse license: {}", line))?;
             packages.push(Package::new(words[0], license));
         }
 
@@ -191,7 +153,7 @@ fn find_paren_end(text: &str) -> Result<usize> {
         }
     }
 
-    Err(VrmsError::new_box(format!("mismatched opening paren in string: {}", text)))
+    Err(Error::from(format!("mismatched opening paren in string: {}", text)))
 }
 
 #[derive(Debug)]
@@ -207,7 +169,7 @@ fn detect_separator(text: &str) -> Result<Option<Separator>> {
             " or " => {
                 match separator {
                     Some(Separator::And) =>  {
-                        return Err(VrmsError::new_box(format!("mismatched separators (and/or) in segment: {}", text)));
+                        return Err(Error::from(format!("mismatched separators (and/or) in segment: {}", text)));
                     },
                     _ => separator = Some(Separator::Or)
                 }
@@ -215,7 +177,7 @@ fn detect_separator(text: &str) -> Result<Option<Separator>> {
             " and " => {
                 match separator {
                     Some(Separator::Or) => {
-                        return Err(VrmsError::new_box(format!("mismatched separators (and/or) in segment: {}", text)));
+                        return Err(Error::from(format!("mismatched separators (and/or) in segment: {}", text)));
                     },
                     _ => separator = Some(Separator::And)
                 }
@@ -224,7 +186,7 @@ fn detect_separator(text: &str) -> Result<Option<Separator>> {
                 offset += find_paren_end(&text[offset..])? - m.end(); // TODO: hax
             },
             ")" => {
-                return Err(VrmsError::new_box(format!("mismatched closing paren at offset {}, text = {}", offset, text)))
+                return Err(Error::from(format!("mismatched closing paren at offset {}, text = {}", offset, text)))
             }
             _ => panic!("should never happen")
         }
@@ -256,7 +218,7 @@ impl License {
         let text = unparenthesize(raw_text.trim());
 
         if text.is_empty() {
-            Err(VrmsError::new_box("invalid empty license description segment".to_owned()))
+            Err(Error::from("invalid empty license description segment"))
         } else {
             match detect_separator(text)? {
                 Some(Separator::Or) => License::make_or(text),
@@ -265,7 +227,7 @@ impl License {
                     if parens_balanced(text) {
                         Ok(License::License(text.to_owned()))
                     } else {
-                        Err(VrmsError::new_box(format!("unbalanced parentheses in segment: {}", text)))
+                        Err(Error::from(format!("unbalanced parentheses in segment: {}", text)))
                     }
                 }
             }

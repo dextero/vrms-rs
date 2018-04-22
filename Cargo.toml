@@ -6,3 +6,4 @@ authors = ["Marcin Radomski <marcin@mradomski.pl>"]
 [dependencies]
 matches = "0.1.6"
 regex = "0.2"
+error-chain = "0.11"
