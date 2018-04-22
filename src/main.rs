@@ -5,7 +5,6 @@ extern crate regex;
 #[macro_use]
 extern crate error_chain;
 
-use std::cmp::min;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufRead;
@@ -107,15 +106,14 @@ fn parens_balanced(text: &str) -> bool {
 }
 
 fn unparenthesize(text: &str) -> &str {
-    let opening_parens = text.chars()
-                             .take_while(|c| { *c == '(' })
-                             .count();
-    let closing_parens = text.chars()
-                             .rev()
-                             .take_while(|c| { *c == ')' })
-                             .count();
-    let chars_to_trim = min(opening_parens, closing_parens);
-    &text[chars_to_trim..text.len() - chars_to_trim]
+    if text.len() < 2
+            || text.chars().next() != Some('(')
+            || text.chars().rev().next() != Some(')')
+            || !parens_balanced(&text[1 .. text.len() - 1]) {
+        text
+    } else {
+        unparenthesize(&text[1 .. text.len() - 1].trim())
+    }
 }
 
 #[test]
@@ -123,9 +121,12 @@ fn test_unparenthesize() {
     assert_eq!("", unparenthesize(""));
     assert_eq!("a", unparenthesize("a"));
     assert_eq!("a", unparenthesize("(a)"));
+    assert_eq!("a", unparenthesize("( (a) )"));
+    assert_eq!("a", unparenthesize("( (a))"));
+    assert_eq!("a", unparenthesize("((a) )"));
     assert_eq!("a", unparenthesize("(((a)))"));
-    assert_eq!("(a", unparenthesize("(((a))"));
-    assert_eq!("a)", unparenthesize("((a)))"));
+    assert_eq!("(((a))", unparenthesize("(((a))"));
+    assert_eq!("((a)))", unparenthesize("((a)))"));
     assert_eq!(" (a)))", unparenthesize(" (a)))"));
 }
 
@@ -322,7 +323,7 @@ fn license_parse_nested() {
                    vec!(License::Or(vec!(License::License("a".to_owned()),
                                          License::License("b".to_owned()))),
                         License::Or(vec!(License::License("c".to_owned()),
-                                         License::License("f".to_owned()))))),
+                                         License::License("d".to_owned()))))),
                License::parse("(a or b) and (c or d)").unwrap());
 }
 
