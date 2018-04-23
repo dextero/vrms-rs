@@ -49,6 +49,14 @@ impl Package {
             license: license
         }
     }
+
+    fn colored_name(&self, good_licenses: &HashSet<String>) -> String {
+        if self.license.matches(good_licenses) {
+            self.name.clone()
+        } else {
+            format!("{}", self.name.on_red())
+        }
+    }
 }
 
 trait PackageReader {
@@ -234,21 +242,41 @@ impl License {
         }
     }
 
-    fn str(&self) -> String {
+    fn colored_str(&self, good_licenses: &HashSet<String>) -> String {
+        let is_good = self.matches(good_licenses);
+
         match self {
-            License::License(name) => name.to_owned(),
+            License::License(name) => {
+                if is_good {
+                    format!("{}", name.green())
+                } else {
+                    format!("{}", name.red())
+                }
+            },
             License::Or(sub_licenses) => {
+                let joiner = " or ";
+                let colored_joiner = if is_good {
+                    joiner.green()
+                } else {
+                    joiner.red()
+                };
                 format!("({})", sub_licenses.iter()
-                                            .map(License::str)
+                                            .map(|l| { License::colored_str(l, good_licenses) })
                                             .collect::<Vec<_>>()
-                                            .join(" or "))
+                                            .join(&colored_joiner))
             },
             License::And(sub_licenses) => {
+                let joiner = " and ";
+                let colored_joiner = if is_good {
+                    joiner.green()
+                } else {
+                    joiner.red()
+                };
                 format!("({})", sub_licenses.iter()
-                                            .map(License::str)
+                                            .map(|l| { License::colored_str(l, good_licenses) })
                                             .collect::<Vec<_>>()
-                                            .join(" and "))
-            }
+                                            .join(&colored_joiner))
+            },
         }
     }
 }
@@ -377,10 +405,6 @@ fn main() {
     };
 
     for package in packages {
-        if package.license.matches(&licenses) {
-            println!("{}: {}", package.name, package.license.str().green());
-        } else {
-            println!("{}: {}", package.name, package.license.str().red());
-        }
+        println!("{}: {}", package.colored_name(&licenses), package.license.colored_str(&licenses))
     }
 }
