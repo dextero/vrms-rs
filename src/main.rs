@@ -233,6 +233,24 @@ impl License {
             }
         }
     }
+
+    fn str(&self) -> String {
+        match self {
+            License::License(name) => name.to_owned(),
+            License::Or(sub_licenses) => {
+                format!("({})", sub_licenses.iter()
+                                            .map(License::str)
+                                            .collect::<Vec<_>>()
+                                            .join(" or "))
+            },
+            License::And(sub_licenses) => {
+                format!("({})", sub_licenses.iter()
+                                            .map(License::str)
+                                            .collect::<Vec<_>>()
+                                            .join(" and "))
+            }
+        }
+    }
 }
 
 impl PartialEq for License {
@@ -360,9 +378,9 @@ fn main() {
 
     for package in packages {
         if package.license.matches(&licenses) {
-            println!("{}: zajebioza", package.name.green());
+            println!("{}: {}", package.name, package.license.str().green());
         } else {
-            println!("{}: chujowo", package.name.red());
+            println!("{}: {}", package.name, package.license.str().red());
         }
     }
 }
