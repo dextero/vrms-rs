@@ -157,6 +157,73 @@ fn find_paren_end(text: &str) -> Result<usize> {
     Err(Error::from(format!("mismatched opening paren in string: {}", text)))
 }
 
+struct TokenIterator {
+    text: &str,
+    offset: usize,
+}
+
+impl TokenIterator {
+    fn new(text: &str) -> TokenIterator {
+        TokenIterator {
+            text: text,
+            offset: 0
+        }
+    }
+}
+
+impl Iterator for TokenIterator {
+    type Item = &str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.text.len() {
+            return None;
+        }
+
+        if let Some(off) = self.text[self.offset..].find(|c| !c.isspace()) {
+            self.offset += off;
+            let mut nesting = 0;
+
+            for idx in self.offset .. self.text.len() {
+                match self.text[idx] {
+                    '(' => nesting += 1,
+                    ')' => {
+                        if nesting > 0 {
+                            nesting -= 1;
+                        } else {
+                            // allow mismatched right-parens
+                            // TODO: log a warning
+                        }
+                    },
+                    c if c.isspace() => {
+                        if nesting == 0 {
+                            let token = &self.text[self.offset .. idx+1];
+                            self.offset = idx+1;
+                            return Some(token);
+                        }
+                    }
+                }
+            }
+
+            if nesting > 0 {
+                // allow mismatched left-parens
+                // TODO: log a warning
+            }
+        }
+
+        let token = &self.text[self.offset..];
+        self.offset = self.text.len();
+        Some(token)
+    }
+}
+
+trait Tokenizable {
+    fn tokens(&self) -> TokenIterator;
+}
+
+impl Tokenizable for str {
+    fn tokens(&self) -> TokenIterator { TokenIterator::new(self) }
+}
+
 impl License {
     fn parse(raw_text: &str) -> Result<License> {
         let text = unparenthesize(raw_text.trim());
@@ -164,51 +231,70 @@ impl License {
             return Err(Error::from("empty license segment"));
         }
 
-        let regex = Regex::new(r"(?: or )|(?: and )|[()]")?;
-
-        Ok(match regex.find(text) {
-            None => License::License(text.to_owned()),
-            Some(m) => {
-                match m.as_str() {
-                    " or " => {
-                        let lhs = License::parse(&raw_text[..m.start()])
-                            .chain_err(|| format!("when parsing LHS of: {}", text))?;
-                        let rhs = License::parse(&raw_text[m.end()..])
-                            .chain_err(|| format!("when parsing RHS of: {}", text))?;
-                        if let License::Or(v) = rhs {
-                            let mut elems = vec!(lhs);
-                            elems.extend(v);
-                            License::Or(elems)
-                        } else {
-                            License::Or(vec!(lhs, rhs))
-                        }
-                    },
-                    " and " => {
-                        let lhs = License::parse(&raw_text[..m.start()])
-                            .chain_err(|| format!("when parsing LHS of: {}", text))?;
-                        let rhs = License::parse(&raw_text[m.end()..])
-                            .chain_err(|| format!("when parsing RHS of: {}", text))?;
-                        if let License::And(v) = rhs {
-                            let mut elems = vec!(lhs);
-                            elems.extend(v);
-                            License::And(elems)
-                        } else {
-                            License::And(vec!(lhs, rhs))
-                        }
-                    },
-                    "(" => {
-                        let sublicense_len = find_paren_end(&text[m.start()..])
-                            .chain_err(|| format!("when parsing: {}", text))?;
-                        let sublicense = &text[.. m.start() + sublicense_len];
-                        License::parse(sublicense)?
-                    },
-                    ")" => {
-                        return Err(Error::from(format!("mismatched closing paren at offset {}, text = {}", m.start(), text)))
-                    }
-                    _ => panic!("should never happen")
-                }
+        for token in text.tokens() {
+            match token {
+                "or" => 
             }
-        })
+        }
+
+        let regex = Regex::new(r"(?: or )|(?: and )|[()]")?;
+        let mut offset = 0;
+        let mut regex_match = regex.find(text);
+
+        while let Some(m) = regex_match {
+            regex_match = 
+        }
+
+
+        while let Some(m) = regex_match {
+            let license_opt = match m.as_str() {
+                " or " => {
+                    let lhs = License::parse(&raw_text[..m.start()])
+                        .chain_err(|| format!("when parsing LHS of: {}", text))?;
+                    let rhs = License::parse(&raw_text[m.end()..])
+                        .chain_err(|| format!("when parsing RHS of: {}", text))?;
+                    if let License::Or(v) = rhs {
+                        let mut elems = vec!(lhs);
+                        elems.extend(v);
+                        Some(License::Or(elems))
+                    } else {
+                        Some(License::Or(vec!(lhs, rhs)))
+                    }
+                },
+                " and " => {
+                    let lhs = License::parse(&raw_text[..m.start()])
+                        .chain_err(|| format!("when parsing LHS of: {}", text))?;
+                    let rhs = License::parse(&raw_text[m.end()..])
+                        .chain_err(|| format!("when parsing RHS of: {}", text))?;
+                    if let License::And(v) = rhs {
+                        let mut elems = vec!(lhs);
+                        elems.extend(v);
+                        Some(License::And(elems))
+                    } else {
+                        Some(License::And(vec!(lhs, rhs)))
+                    }
+                },
+                "(" => {
+                    let sublicense_len = find_paren_end(&text[m.start()..])
+                        .chain_err(|| format!("when parsing: {}", text))?;
+                    let sublicense = &text[.. m.start() + sublicense_len];
+                    License::parse(sublicense)?;
+                    None
+                },
+                ")" => {
+                    return Err(Error::from(format!("mismatched closing paren at offset {}, text = {}", m.start(), text)))
+                }
+                _ => panic!("should never happen")
+            };
+
+            if let Some(license) = license_opt {
+                return Ok(license)
+            }
+
+            regex_match = re.find(&text[m.end()..]);
+        }
+
+        Ok(text)
     }
 
     fn matches(&self, good_licenses: &HashSet<String>) -> bool {
