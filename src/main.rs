@@ -4,15 +4,18 @@ extern crate matches;
 extern crate regex;
 #[macro_use]
 extern crate error_chain;
+extern crate colored;
 
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufRead;
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::process::Command;
 use std::process;
 
 use regex::Regex;
+
+use colored::*;
 
 error_chain! {
     foreign_links {
@@ -357,9 +360,9 @@ fn main() {
 
     for package in packages {
         if package.license.matches(&licenses) {
-            println!("{}: zajebioza", package.name);
+            println!("{}: zajebioza", package.name.green());
         } else {
-            println!("{}: chujowo", package.name);
+            println!("{}: chujowo", package.name.red());
         }
     }
 }
