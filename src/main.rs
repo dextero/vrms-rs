@@ -88,6 +88,26 @@ impl PackageReader for RpmPackageReader {
     }
 }
 
+fn find_paren_end(text: &str) -> Result<usize> {
+    assert!(text.chars().next() == Some('('));
+
+    let mut depth = 1;
+    for (idx, c) in text.chars().enumerate().skip(1) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(idx + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err(Error::from(format!("mismatched opening paren in string: {}", text)))
+}
+
 fn parens_balanced(text: &str) -> bool {
     let mut depth = 0;
 
@@ -138,26 +158,6 @@ enum License {
     License(String),
     Or(Vec<License>),
     And(Vec<License>),
-}
-
-fn find_paren_end(text: &str) -> Result<usize> {
-    assert!(text.chars().next() == Some('('));
-
-    let mut depth = 1;
-    for (idx, c) in text.chars().enumerate().skip(1) {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Ok(idx + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Err(Error::from(format!("mismatched opening paren in string: {}", text)))
 }
 
 impl License {
