@@ -254,28 +254,22 @@ impl License {
                 }
             },
             License::Or(sub_licenses) => {
-                let joiner = " or ";
-                let colored_joiner = if is_good {
-                    joiner.green()
-                } else {
-                    joiner.red()
-                };
-                format!("({})", sub_licenses.iter()
-                                            .map(|l| { License::colored_str(l, good_licenses) })
-                                            .collect::<Vec<_>>()
-                                            .join(&colored_joiner))
+                format!("{}{}{}",
+                        if is_good { "(".green() } else { "(".red() },
+                        sub_licenses.iter()
+                                    .map(|l| { License::colored_str(l, good_licenses) })
+                                    .collect::<Vec<_>>()
+                                    .join(" or "),
+                        if is_good { ")".green() } else { ")".red() })
             },
             License::And(sub_licenses) => {
-                let joiner = " and ";
-                let colored_joiner = if is_good {
-                    joiner.green()
-                } else {
-                    joiner.red()
-                };
-                format!("({})", sub_licenses.iter()
-                                            .map(|l| { License::colored_str(l, good_licenses) })
-                                            .collect::<Vec<_>>()
-                                            .join(&colored_joiner))
+                format!("{}{}{}",
+                        if is_good { "(".green() } else { "(".red() },
+                        sub_licenses.iter()
+                                    .map(|l| { License::colored_str(l, good_licenses) })
+                                    .collect::<Vec<_>>()
+                                    .join(" and "),
+                        if is_good { ")".green() } else { ")".red() })
             },
         }
     }
