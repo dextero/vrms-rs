@@ -157,82 +157,58 @@ fn find_paren_end(text: &str) -> Result<usize> {
     Err(Error::from(format!("mismatched opening paren in string: {}", text)))
 }
 
-#[derive(Debug)]
-enum Separator { Or, And }
-
-fn detect_separator(text: &str) -> Result<Option<Separator>> {
-    let mut separator = None;
-    let regex = Regex::new(r"(?: or )|(?: and )|[()]")?;
-
-    let mut offset = 0;
-    while let Some(m) = regex.find(&text[offset..]) {
-        match m.as_str() {
-            " or " => {
-                match separator {
-                    Some(Separator::And) =>  {
-                        return Err(Error::from(format!("mismatched separators (and/or) in segment: {}", text)));
-                    },
-                    _ => separator = Some(Separator::Or)
-                }
-            },
-            " and " => {
-                match separator {
-                    Some(Separator::Or) => {
-                        return Err(Error::from(format!("mismatched separators (and/or) in segment: {}", text)));
-                    },
-                    _ => separator = Some(Separator::And)
-                }
-            },
-            "(" => { 
-                offset += find_paren_end(&text[offset..])? - m.end(); // TODO: hax
-            },
-            ")" => {
-                return Err(Error::from(format!("mismatched closing paren at offset {}, text = {}", offset, text)))
-            }
-            _ => panic!("should never happen")
-        }
-
-        offset += m.end();
-    }
-
-    Ok(separator)
-}
-
 impl License {
-    fn make_or(def: &str) -> Result<License> {
-        let mut segments = Vec::new();
-        for segment in def.split(" or ") {
-            segments.push(License::parse(segment)?);
-        }
-        Ok(License::Or(segments))
-    }
-
-    fn make_and(def: &str) -> Result<License> {
-        let mut segments = Vec::new();
-        for segment in def.split(" and ") {
-            segments.push(License::parse(segment)?);
-        }
-        Ok(License::And(segments))
-    }
-
     fn parse(raw_text: &str) -> Result<License> {
         let text = unparenthesize(raw_text.trim());
+        if text.len() == 0 {
+            return Err(Error::from("empty license segment"));
+        }
 
-        if text.is_empty() {
-            Err(Error::from("invalid empty license description segment"))
-        } else {
-            match detect_separator(text)? {
-                Some(Separator::Or) => License::make_or(text),
-                Some(Separator::And) => License::make_and(text),
-                None => {
-                    if parens_balanced(text) {
-                        Ok(License::License(text.to_owned()))
-                    } else {
-                        Err(Error::from(format!("unbalanced parentheses in segment: {}", text)))
+        let regex = Regex::new(r"(?: or )|(?: and )|[()]")?;
+
+        Ok(match regex.find(text) {
+            None => License::License(text.to_owned()),
+            Some(m) => {
+                match m.as_str() {
+                    " or " => {
+                        let lhs = License::parse(&raw_text[..m.start()])
+                            .chain_err(|| format!("when parsing LHS of: {}", text))?;
+                        let rhs = License::parse(&raw_text[m.end()..])
+                            .chain_err(|| format!("when parsing RHS of: {}", text))?;
+                        if let License::Or(v) = rhs {
+                            let mut elems = vec!(lhs);
+                            elems.extend(v);
+                            License::Or(elems)
+                        } else {
+                            License::Or(vec!(lhs, rhs))
+                        }
+                    },
+                    " and " => {
+                        let lhs = License::parse(&raw_text[..m.start()])
+                            .chain_err(|| format!("when parsing LHS of: {}", text))?;
+                        let rhs = License::parse(&raw_text[m.end()..])
+                            .chain_err(|| format!("when parsing RHS of: {}", text))?;
+                        if let License::And(v) = rhs {
+                            let mut elems = vec!(lhs);
+                            elems.extend(v);
+                            License::And(elems)
+                        } else {
+                            License::And(vec!(lhs, rhs))
+                        }
+                    },
+                    "(" => {
+                        let sublicense_len = find_paren_end(&text[m.start()..])
+                            .chain_err(|| format!("when parsing: {}", text))?;
+                        let sublicense = &text[.. m.start() + sublicense_len];
+                        License::parse(sublicense)?
+                    },
+                    ")" => {
+                        return Err(Error::from(format!("mismatched closing paren at offset {}, text = {}", m.start(), text)))
                     }
+                    _ => panic!("should never happen")
                 }
             }
-        }
+        })
     }
 
     fn matches(&self, good_licenses: &HashSet<String>) -> bool {
@@ -337,9 +313,21 @@ fn license_parse_invalid() {
     assert_matches!(License::parse(" (a"), Err(_));
     assert_matches!(License::parse("a) "), Err(_));
     assert_matches!(License::parse("((a)"), Err(_));
-    assert_matches!(License::parse("(a))"), Err(_));
-    assert_matches!(License::parse("a and b or c"), Err(_));
-    assert_matches!(License::parse("a or b and c"), Err(_));
+    //assert_matches!(License::parse("(a))"), Err(_));
+}
+
+#[test]
+fn license_parse_ambigious() {
+    assert_eq!(License::And(
+                   vec!(License::License("a".to_owned()),
+                        License::Or(vec!(License::License("b".to_owned()),
+                                         License::License("c".to_owned()))))),
+               License::parse("a and b or c").unwrap());
+    assert_eq!(License::Or(
+                   vec!(License::License("a".to_owned()),
+                        License::And(vec!(License::License("b".to_owned()),
+                                          License::License("c".to_owned()))))),
+               License::parse("a or b and c").unwrap());
 }
 
 fn main() {
