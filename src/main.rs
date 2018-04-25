@@ -78,8 +78,9 @@ impl RpmPackageReader {
 impl PackageReader for RpmPackageReader {
     fn read_packages(&self) -> Result<Vec<Package>> {
         let child = Command::new("rpm")
-            .args(&["--all", "--query", "--queryformat", "'%{NAME}:%{LICENSE}\n'"])
-            .output()?;
+            .args(&["--all", "--query", "--queryformat", "%{NAME}\t%{LICENSE}\n"])
+            .output()
+            .chain_err(|| "could not execute rpm command")?;
         let mut packages = Vec::new();
         let packages_str = String::from_utf8(child.stdout)?;
 
